@@ -500,50 +500,397 @@ function Enable-CredentialGuard {
 }
 
 # =============================================================================
+#  PRIVACY & TELEMETRY
+# =============================================================================
+
+function Disable-Telemetry {
+    Write-Info "Disabling Windows Telemetry and data collection services..."
+
+    # Stop and disable telemetry services
+    foreach ($svc in @('DiagTrack', 'dmwappushservice')) {
+        $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
+        if ($s) {
+            Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+            Set-Service  -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+            Write-Ok "Service '$svc' stopped and disabled."
+        }
+    }
+
+    # Set telemetry level to 0 (Security) via policy
+    $dc = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
+    if (-not (Test-Path $dc)) { New-Item -Path $dc -Force | Out-Null }
+    Set-ItemProperty -Path $dc -Name "AllowTelemetry" -Value 0 -Type DWord -Force
+    Write-Ok "Telemetry level set to 0 (Security)."
+
+    # Disable Customer Experience Improvement Program (CEIP)
+    $ceip = "HKLM:\SOFTWARE\Policies\Microsoft\SQMClient\Windows"
+    if (-not (Test-Path $ceip)) { New-Item -Path $ceip -Force | Out-Null }
+    Set-ItemProperty -Path $ceip -Name "CEIPEnable" -Value 0 -Type DWord -Force
+    Write-Ok "Customer Experience Improvement Program (CEIP) disabled."
+
+    # Disable Application Impact Telemetry (AIT)
+    $ait = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppCompat"
+    if (-not (Test-Path $ait)) { New-Item -Path $ait -Force | Out-Null }
+    Set-ItemProperty -Path $ait -Name "AITEnable" -Value 0 -Type DWord -Force
+    Write-Ok "Application Impact Telemetry (AIT) disabled."
+
+    # Disable Windows Error Reporting
+    $wer = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting"
+    if (-not (Test-Path $wer)) { New-Item -Path $wer -Force | Out-Null }
+    Set-ItemProperty -Path $wer -Name "Disabled" -Value 1 -Type DWord -Force
+    Write-Ok "Windows Error Reporting disabled."
+}
+
+function Enable-Telemetry {
+    Write-Info "Restoring Windows Telemetry to default settings..."
+    $dc = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
+    Set-ItemProperty -Path $dc -Name "AllowTelemetry" -Value 3 -Type DWord -Force -ErrorAction SilentlyContinue
+    foreach ($svc in @('DiagTrack', 'dmwappushservice')) {
+        $s = Get-Service -Name $svc -ErrorAction SilentlyContinue
+        if ($s) { Set-Service -Name $svc -StartupType Automatic -ErrorAction SilentlyContinue }
+    }
+    Write-Ok "Telemetry restored to default."
+}
+
+function Disable-AdvertisingID {
+    Write-Info "Disabling Advertising ID and content tracking..."
+
+    # Per-user advertising ID
+    $advInfo = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\AdvertisingInfo"
+    if (-not (Test-Path $advInfo)) { New-Item -Path $advInfo -Force | Out-Null }
+    Set-ItemProperty -Path $advInfo -Name "Enabled" -Value 0 -Type DWord -Force
+    Write-Ok "Advertising ID disabled (per user)."
+
+    # System-wide policy
+    $advPol = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo"
+    if (-not (Test-Path $advPol)) { New-Item -Path $advPol -Force | Out-Null }
+    Set-ItemProperty -Path $advPol -Name "DisabledByGroupPolicy" -Value 1 -Type DWord -Force
+    Write-Ok "Advertising ID policy disabled."
+
+    # Disable suggested content and silent app installs
+    $cdm = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
+    if (Test-Path $cdm) {
+        $prefs = @(
+            'SubscribedContent-338389Enabled',
+            'SubscribedContent-338388Enabled',
+            'SilentInstalledAppsEnabled',
+            'SystemPaneSuggestionsEnabled',
+            'SoftLandingEnabled'
+        )
+        foreach ($pref in $prefs) {
+            Set-ItemProperty -Path $cdm -Name $pref -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+        }
+        Write-Ok "Suggested content and silent app installs disabled."
+    }
+}
+
+function Disable-Cortana {
+    Write-Info "Disabling Cortana and web search integration..."
+    $search = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"
+    if (-not (Test-Path $search)) { New-Item -Path $search -Force | Out-Null }
+    Set-ItemProperty -Path $search -Name "AllowCortana"              -Value 0 -Type DWord -Force
+    Set-ItemProperty -Path $search -Name "AllowSearchToUseLocation"  -Value 0 -Type DWord -Force
+    Set-ItemProperty -Path $search -Name "DisableWebSearch"           -Value 1 -Type DWord -Force
+    Set-ItemProperty -Path $search -Name "ConnectedSearchUseWeb"      -Value 0 -Type DWord -Force
+    Set-ItemProperty -Path $search -Name "AllowCloudSearch"           -Value 0 -Type DWord -Force
+    Write-Ok "Cortana and web search disabled via Group Policy."
+}
+
+# =============================================================================
+#  ADVANCED SYSTEM HARDENING
+# =============================================================================
+
+function Disable-PrintSpooler {
+    Write-Info "Disabling Print Spooler (mitigates PrintNightmare CVE-2021-34527)..."
+    Stop-Service -Name Spooler -Force -ErrorAction SilentlyContinue
+    Set-Service  -Name Spooler -StartupType Disabled -ErrorAction SilentlyContinue
+    Write-Ok "Print Spooler service stopped and disabled."
+    Write-Warn "Re-enable the Spooler (option 34) before printing."
+}
+
+function Enable-PrintSpooler {
+    Write-Info "Enabling Print Spooler service..."
+    Set-Service  -Name Spooler -StartupType Automatic -ErrorAction SilentlyContinue
+    Start-Service -Name Spooler -ErrorAction SilentlyContinue
+    Write-Ok "Print Spooler enabled."
+}
+
+function Set-NTLMv2Only {
+    Write-Info "Enforcing NTLMv2 authentication (disabling NTLMv1 and LM)..."
+    $lsa = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
+    # Level 5 = send NTLMv2 responses only; refuse LM and NTLM
+    Set-ItemProperty -Path $lsa -Name "LmCompatibilityLevel" -Value 5 -Type DWord -Force
+    Write-Ok "LmCompatibilityLevel set to 5 (NTLMv2 only; refuse LM and NTLM)."
+
+    # Do not store LAN Manager hash on next password change
+    Set-ItemProperty -Path $lsa -Name "NoLMHash" -Value 1 -Type DWord -Force
+    Write-Ok "LM hash storage disabled."
+
+    # Require 128-bit session security for NTLM
+    $msv = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa\MSV1_0"
+    if (-not (Test-Path $msv)) { New-Item -Path $msv -Force | Out-Null }
+    # 537395200 = Require 128-bit + NTLMv2 session security
+    Set-ItemProperty -Path $msv -Name "NTLMMinClientSec" -Value 537395200 -Type DWord -Force
+    Set-ItemProperty -Path $msv -Name "NTLMMinServerSec" -Value 537395200 -Type DWord -Force
+    Write-Ok "NTLM minimum 128-bit session security enforced on client and server."
+}
+
+function Disable-PowerShellv2 {
+    Write-Info "Disabling PowerShell v2 (prevents script-block logging bypass)..."
+    $feat = Get-WindowsOptionalFeature -Online -FeatureName "MicrosoftWindowsPowerShellV2Root" `
+            -ErrorAction SilentlyContinue
+    if ($feat -and $feat.State -eq 'Enabled') {
+        Disable-WindowsOptionalFeature -Online -FeatureName "MicrosoftWindowsPowerShellV2Root" `
+            -NoRestart -ErrorAction SilentlyContinue | Out-Null
+        Write-Ok "PowerShell v2 disabled."
+        Write-Warn "A restart may be required for the change to take full effect."
+    } elseif ($feat -and $feat.State -eq 'Disabled') {
+        Write-Warn "PowerShell v2 is already disabled on this system."
+    } else {
+        Write-Warn "PowerShell v2 optional feature not found (may not be installed)."
+    }
+}
+
+function Enable-ExploitProtection {
+    Write-Info "Enabling system-wide Exploit Protection (DEP, SEHOP, ASLR, heap guard)..."
+
+    # SEHOP (Structured Exception Handler Overwrite Protection)
+    $kernel = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel"
+    Set-ItemProperty -Path $kernel -Name "DisableExceptionChainValidation" -Value 0 -Type DWord -Force
+    Write-Ok "SEHOP enabled."
+
+    # DEP (Data Execution Prevention) — AlwaysOn
+    & bcdedit /set nx AlwaysOn 2>&1 | Out-Null
+    Write-Ok "DEP (NX) set to AlwaysOn."
+
+    # Heap termination on corruption — system-wide via Set-ProcessMitigation
+    try {
+        Set-ProcessMitigation -System -Enable HeapTerminateOnCorruption -ErrorAction Stop
+        Write-Ok "Heap Terminate on Corruption enabled (system-wide)."
+    } catch {
+        Write-Warn "Set-ProcessMitigation unavailable — heap mitigation skipped."
+    }
+
+    # Force ASLR — mandatory randomisation for images not compiled with ASLR
+    try {
+        Set-ProcessMitigation -System -Enable ForceRelocateImages -ErrorAction Stop
+        Write-Ok "Force ASLR (mandatory image relocation) enabled."
+    } catch {
+        Write-Warn "Force ASLR via Set-ProcessMitigation not available on this system."
+    }
+
+    Write-Ok "Exploit Protection configured. A restart is recommended."
+}
+
+function Enable-ClearPageFileOnShutdown {
+    Write-Info "Enabling clear page file at shutdown (prevents offline data recovery)..."
+    $mm = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
+    Set-ItemProperty -Path $mm -Name "ClearPageFileAtShutdown" -Value 1 -Type DWord -Force
+    Write-Ok "Page file will be cleared on every shutdown."
+    Write-Warn "Shutdown will take longer because the page file must be zeroed."
+}
+
+function Disable-ClearPageFileOnShutdown {
+    Write-Info "Disabling clear page file at shutdown (restoring default)..."
+    $mm = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management"
+    Set-ItemProperty -Path $mm -Name "ClearPageFileAtShutdown" -Value 0 -Type DWord -Force
+    Write-Ok "Page file clear on shutdown disabled."
+}
+
+function Disable-RemoteAssistance {
+    Write-Info "Disabling Remote Assistance..."
+    $ra = "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance"
+    if (-not (Test-Path $ra)) { New-Item -Path $ra -Force | Out-Null }
+    Set-ItemProperty -Path $ra -Name "fAllowToGetHelp"   -Value 0 -Type DWord -Force
+    Set-ItemProperty -Path $ra -Name "fAllowFullControl" -Value 0 -Type DWord -Force
+
+    $ts = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+    if (-not (Test-Path $ts)) { New-Item -Path $ts -Force | Out-Null }
+    Set-ItemProperty -Path $ts -Name "fAllowUnsolicited" -Value 0 -Type DWord -Force
+    Set-ItemProperty -Path $ts -Name "fAllowToGetHelp"   -Value 0 -Type DWord -Force
+
+    Get-NetFirewallRule -DisplayGroup "Remote Assistance" -ErrorAction SilentlyContinue |
+        Disable-NetFirewallRule -ErrorAction SilentlyContinue
+    Write-Ok "Remote Assistance disabled and firewall rules deactivated."
+}
+
+function Enable-RemoteAssistance {
+    Write-Info "Enabling Remote Assistance..."
+    $ra = "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance"
+    if (-not (Test-Path $ra)) { New-Item -Path $ra -Force | Out-Null }
+    Set-ItemProperty -Path $ra -Name "fAllowToGetHelp" -Value 1 -Type DWord -Force
+    Write-Ok "Remote Assistance enabled."
+}
+
+# =============================================================================
+#  NETWORK & DNS HARDENING
+# =============================================================================
+
+function Set-SecureDNS {
+    Write-Info "Configuring secure DNS servers (Cloudflare 1.1.1.1 + Google 8.8.8.8) on all active adapters..."
+    $dnsServers = @("1.1.1.1", "1.0.0.1", "8.8.8.8", "8.8.4.4")
+    $adapters   = @(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' })
+    if ($adapters.Count -eq 0) {
+        Write-Warn "No active network adapters found."
+        return
+    }
+    foreach ($a in $adapters) {
+        try {
+            Set-DnsClientServerAddress -InterfaceIndex $a.InterfaceIndex `
+                -ServerAddresses $dnsServers -ErrorAction Stop
+            Write-Ok "DNS set on '$($a.Name)': $($dnsServers -join ', ')."
+        } catch {
+            Write-Fail "Could not set DNS on '$($a.Name)': $_"
+        }
+    }
+    Write-Ok "Secure DNS applied. Encrypted DNS (DoH) can be configured in Windows Settings > Network."
+}
+
+function Disable-IPv6 {
+    Write-Info "Disabling IPv6 on all network adapters (reduces attack surface)..."
+    $adapters = @(Get-NetAdapter -ErrorAction SilentlyContinue)
+    foreach ($a in $adapters) {
+        Disable-NetAdapterBinding -Name $a.Name -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue
+    }
+    # Registry fallback — disable all IPv6 components
+    $ipv6 = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters"
+    if (-not (Test-Path $ipv6)) { New-Item -Path $ipv6 -Force | Out-Null }
+    Set-ItemProperty -Path $ipv6 -Name "DisabledComponents" -Value 0xFF -Type DWord -Force
+    Write-Ok "IPv6 disabled on all adapters."
+    Write-Warn "If your network uses IPv6, some connectivity may be affected."
+}
+
+function Enable-IPv6 {
+    Write-Info "Re-enabling IPv6 on all network adapters..."
+    $adapters = @(Get-NetAdapter -ErrorAction SilentlyContinue)
+    foreach ($a in $adapters) {
+        Enable-NetAdapterBinding -Name $a.Name -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue
+    }
+    $ipv6 = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters"
+    Set-ItemProperty -Path $ipv6 -Name "DisabledComponents" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+    Write-Ok "IPv6 re-enabled on all adapters."
+}
+
+# =============================================================================
+#  ADDITIONAL HARDENING
+# =============================================================================
+
+function Enable-AutomaticUpdates {
+    Write-Info "Configuring Windows Update for automatic installation..."
+    $wu = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU"
+    if (-not (Test-Path $wu)) { New-Item -Path $wu -Force | Out-Null }
+    Set-ItemProperty -Path $wu -Name "NoAutoUpdate"              -Value 0 -Type DWord -Force
+    Set-ItemProperty -Path $wu -Name "AUOptions"                 -Value 4 -Type DWord -Force  # Auto download and install
+    Set-ItemProperty -Path $wu -Name "AutoInstallMinorUpdates"   -Value 1 -Type DWord -Force
+    Set-ItemProperty -Path $wu -Name "ScheduledInstallDay"      -Value 0 -Type DWord -Force  # Every day
+    Set-ItemProperty -Path $wu -Name "ScheduledInstallTime"     -Value 3 -Type DWord -Force  # 03:00
+    Write-Ok "Automatic Windows Updates enabled (daily at 03:00)."
+
+    # Ensure Windows Update service is set to automatic
+    $wuSvc = Get-Service -Name wuauserv -ErrorAction SilentlyContinue
+    if ($wuSvc) {
+        Set-Service -Name wuauserv -StartupType Automatic -ErrorAction SilentlyContinue
+        Write-Ok "Windows Update service set to Automatic."
+    }
+}
+
+function Set-ScreenLockTimeout {
+    Write-Info "Setting screen auto-lock to 5 minutes and requiring password on wake..."
+
+    # Screensaver with password lock
+    $desktop = "HKCU:\Control Panel\Desktop"
+    Set-ItemProperty -Path $desktop -Name "ScreenSaveActive"    -Value "1"   -Type String -Force
+    Set-ItemProperty -Path $desktop -Name "ScreenSaveTimeOut"   -Value "300" -Type String -Force
+    Set-ItemProperty -Path $desktop -Name "ScreenSaverIsSecure" -Value "1"   -Type String -Force
+    Write-Ok "Screensaver timeout set to 5 minutes with password required."
+
+    # Group Policy enforcement
+    $gpDesktop = "HKCU:\SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop"
+    if (-not (Test-Path $gpDesktop)) { New-Item -Path $gpDesktop -Force | Out-Null }
+    Set-ItemProperty -Path $gpDesktop -Name "ScreenSaveTimeOut"   -Value "300" -Type String -Force
+    Set-ItemProperty -Path $gpDesktop -Name "ScreenSaveActive"    -Value "1"   -Type String -Force
+    Set-ItemProperty -Path $gpDesktop -Name "ScreenSaverIsSecure" -Value "1"   -Type String -Force
+
+    # Require password on wake from sleep/hibernate
+    & powercfg /SETACVALUEINDEX SCHEME_CURRENT SUB_NONE CONSOLELOCK 1 2>&1 | Out-Null
+    & powercfg /SETDCVALUEINDEX SCHEME_CURRENT SUB_NONE CONSOLELOCK 1 2>&1 | Out-Null
+    & powercfg /setactive SCHEME_CURRENT 2>&1 | Out-Null
+    Write-Ok "Password required on wake from sleep/hibernate."
+}
+
+function Rename-AdminAccount {
+    Write-Info "Rename the built-in Administrator account (RID 500)..."
+    $admin = Get-LocalUser -ErrorAction SilentlyContinue | Where-Object { $_.SID.Value -match 'S-1-5-21-.*-500$' } | Select-Object -First 1
+    if ($null -eq $admin) {
+        Write-Fail "Could not locate the built-in Administrator account."
+        return
+    }
+    Write-Host "  Current name: $($admin.Name)" -ForegroundColor Cyan
+    $newName = Read-Host "  Enter new account name"
+    $newName = $newName.Trim()
+    if ([string]::IsNullOrWhiteSpace($newName)) {
+        Write-Warn "No name entered — operation cancelled."
+        return
+    }
+    try {
+        Rename-LocalUser -Name $admin.Name -NewName $newName -ErrorAction Stop
+        Write-Ok "Administrator account renamed: '$($admin.Name)' -> '$newName'."
+    } catch {
+        Write-Fail "Rename failed: $_"
+    }
+}
+
+# =============================================================================
 #  SECURITY STATUS REPORT
 # =============================================================================
 
 function Show-SecurityStatus {
     Write-Host ""
-    Write-Host "  ╔══════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║      WINDOWS SECURITY STATUS REPORT          ║" -ForegroundColor Cyan
-    Write-Host "  ╚══════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "  ╔══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+    Write-Host "  ║           WINDOWS SECURITY STATUS REPORT                ║" -ForegroundColor Cyan
+    Write-Host "  ╚══════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
 
     # UAC
     $uacVal = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" `
                -Name "ConsentPromptBehaviorAdmin" -ErrorAction SilentlyContinue).ConsentPromptBehaviorAdmin
     $uacTxt = switch ($uacVal) {
-        0 { "DISABLED — critical risk!"              }
-        1 { "Require credentials (hardened)"         }
-        2 { "Always Notify (hardened)"               }
-        5 { "Default — notify on app changes"        }
-        default { "Unknown ($uacVal)"                }
+        0 { "DISABLED — critical risk!"         }
+        1 { "Require credentials (hardened)"    }
+        2 { "Always Notify (hardened)"          }
+        5 { "Default — notify on app changes"   }
+        default { "Unknown ($uacVal)"           }
     }
     $uacColor = if ($uacVal -ge 1) { "Green" } else { "Red" }
-    Write-Host "  UAC Level         : $uacTxt" -ForegroundColor $uacColor
+    Write-Host "  UAC Level          : $uacTxt" -ForegroundColor $uacColor
 
     # Firewall
-    $fw       = Get-NetFirewallProfile -ErrorAction SilentlyContinue
-    $fwOn     = ($fw | Where-Object Enabled -eq $true).Count
-    $fwColor  = if ($fwOn -eq 3) { "Green" } elseif ($fwOn -gt 0) { "Yellow" } else { "Red" }
-    Write-Host "  Firewall          : $fwOn/3 profiles enabled" -ForegroundColor $fwColor
+    $fw      = Get-NetFirewallProfile -ErrorAction SilentlyContinue
+    $fwOn    = ($fw | Where-Object Enabled -eq $true).Count
+    $fwColor = if ($fwOn -eq 3) { "Green" } elseif ($fwOn -gt 0) { "Yellow" } else { "Red" }
+    Write-Host "  Firewall           : $fwOn/3 profiles enabled" -ForegroundColor $fwColor
 
     # Defender
     $mp = Get-MpComputerStatus -ErrorAction SilentlyContinue
     if ($mp) {
         $rtColor = if ($mp.RealTimeProtectionEnabled) { "Green" } else { "Red" }
-        Write-Host "  Defender RT       : $(if ($mp.RealTimeProtectionEnabled){'Enabled'}else{'DISABLED'})" -ForegroundColor $rtColor
-        Write-Host "  Def. Signatures   : $($mp.AntivirusSignatureLastUpdated)" -ForegroundColor Cyan
+        Write-Host "  Defender RT        : $(if ($mp.RealTimeProtectionEnabled){'Enabled'}else{'DISABLED'})" -ForegroundColor $rtColor
+        Write-Host "  Def. Signatures    : $($mp.AntivirusSignatureLastUpdated)" -ForegroundColor Cyan
     } else {
-        Write-Host "  Defender          : Status unavailable" -ForegroundColor Yellow
+        Write-Host "  Defender           : Status unavailable" -ForegroundColor Yellow
     }
 
     # RDP
     $rdp      = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" `
                  -Name "fDenyTSConnections" -ErrorAction SilentlyContinue).fDenyTSConnections
     $rdpColor = if ($rdp -eq 1) { "Green" } else { "Yellow" }
-    Write-Host "  RDP               : $(if ($rdp -eq 1){'Disabled (secure)'}else{'Enabled'})" -ForegroundColor $rdpColor
+    Write-Host "  RDP                : $(if ($rdp -eq 1){'Disabled (secure)'}else{'Enabled'})" -ForegroundColor $rdpColor
+
+    # Remote Assistance
+    $ra      = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Remote Assistance" `
+                -Name "fAllowToGetHelp" -ErrorAction SilentlyContinue).fAllowToGetHelp
+    $raColor = if ($ra -eq 0) { "Green" } else { "Yellow" }
+    Write-Host "  Remote Assistance  : $(if ($ra -eq 0){'Disabled (secure)'}else{'Enabled'})" -ForegroundColor $raColor
 
     # SMBv1
     $smb1 = $null
@@ -554,43 +901,95 @@ function Show-SecurityStatus {
         $smb1 = ($r -ne 0)
     }
     $smb1Color = if (-not $smb1) { "Green" } else { "Red" }
-    Write-Host "  SMBv1             : $(if (-not $smb1){'Disabled (secure)'}else{'ENABLED — vulnerable!'})" -ForegroundColor $smb1Color
+    Write-Host "  SMBv1              : $(if (-not $smb1){'Disabled (secure)'}else{'ENABLED — vulnerable!'})" -ForegroundColor $smb1Color
+
+    # Print Spooler
+    $spooler = Get-Service -Name Spooler -ErrorAction SilentlyContinue
+    $spoolerOk = $spooler -and $spooler.StartType -eq 'Disabled'
+    $spoolerColor = if ($spoolerOk) { "Green" } else { "Yellow" }
+    Write-Host "  Print Spooler      : $(if ($spoolerOk){'Disabled (secure)'}else{'Enabled'})" -ForegroundColor $spoolerColor
+
+    # NTLMv2
+    $ntlm      = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa" `
+                  -Name "LmCompatibilityLevel" -ErrorAction SilentlyContinue).LmCompatibilityLevel
+    $ntlmColor = if ($ntlm -ge 5) { "Green" } elseif ($ntlm -ge 3) { "Yellow" } else { "Red" }
+    $ntlmTxt   = switch ($ntlm) {
+        5 { "NTLMv2 only (secure)"   }
+        3 { "NTLMv2 + NTLMv1 (partial hardening)" }
+        default { "LM/NTLMv1 allowed — weak!" }
+    }
+    Write-Host "  NTLM Level         : $ntlmTxt" -ForegroundColor $ntlmColor
 
     # USB Storage
     $usbStart = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\UsbStor" `
                  -Name "Start" -ErrorAction SilentlyContinue).Start
     $usbColor = if ($usbStart -eq 4) { "Green" } else { "Yellow" }
-    Write-Host "  USB Storage       : $(if ($usbStart -eq 4){'Disabled'}else{'Enabled'})" -ForegroundColor $usbColor
+    Write-Host "  USB Storage        : $(if ($usbStart -eq 4){'Disabled'}else{'Enabled'})" -ForegroundColor $usbColor
 
     # Guest Account
     $guestLine    = & net user Guest 2>&1 | Select-String "Account active"
     $guestEnabled = "$guestLine" -match "Yes"
     $guestColor   = if (-not $guestEnabled) { "Green" } else { "Red" }
-    Write-Host "  Guest Account     : $(if (-not $guestEnabled){'Disabled (secure)'}else{'ENABLED — risky!'})" -ForegroundColor $guestColor
+    Write-Host "  Guest Account      : $(if (-not $guestEnabled){'Disabled (secure)'}else{'ENABLED — risky!'})" -ForegroundColor $guestColor
 
     # AutoRun
     $ar      = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer" `
                 -Name "NoDriveTypeAutoRun" -ErrorAction SilentlyContinue).NoDriveTypeAutoRun
     $arColor = if ($ar -eq 0xFF) { "Green" } else { "Yellow" }
-    Write-Host "  AutoRun           : $(if ($ar -eq 0xFF){'Fully disabled (secure)'}else{'Not fully disabled'})" -ForegroundColor $arColor
+    Write-Host "  AutoRun            : $(if ($ar -eq 0xFF){'Fully disabled (secure)'}else{'Not fully disabled'})" -ForegroundColor $arColor
 
     # Windows Script Host
     $wsh      = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows Script Host\Settings" `
                  -Name "Enabled" -ErrorAction SilentlyContinue).Enabled
     $wshColor = if ($wsh -eq 0) { "Green" } else { "Yellow" }
-    Write-Host "  Script Host       : $(if ($wsh -eq 0){'Disabled (secure)'}else{'Enabled'})" -ForegroundColor $wshColor
+    Write-Host "  Script Host        : $(if ($wsh -eq 0){'Disabled (secure)'}else{'Enabled'})" -ForegroundColor $wshColor
 
     # LLMNR
     $llmnr      = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\DNSClient" `
                    -Name "EnableMulticast" -ErrorAction SilentlyContinue).EnableMulticast
     $llmnrColor = if ($llmnr -eq 0) { "Green" } else { "Yellow" }
-    Write-Host "  LLMNR             : $(if ($llmnr -eq 0){'Disabled (secure)'}else{'Enabled'})" -ForegroundColor $llmnrColor
+    Write-Host "  LLMNR              : $(if ($llmnr -eq 0){'Disabled (secure)'}else{'Enabled'})" -ForegroundColor $llmnrColor
 
     # WDigest
     $wdigest      = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest" `
                      -Name "UseLogonCredential" -ErrorAction SilentlyContinue).UseLogonCredential
     $wdigestColor = if ($wdigest -eq 0) { "Green" } else { "Red" }
-    Write-Host "  WDigest (creds)   : $(if ($wdigest -eq 0){'Disabled (secure)'}else{'ENABLED — credentials at risk!'})" -ForegroundColor $wdigestColor
+    Write-Host "  WDigest (creds)    : $(if ($wdigest -eq 0){'Disabled (secure)'}else{'ENABLED — credentials at risk!'})" -ForegroundColor $wdigestColor
+
+    # Telemetry
+    $telem      = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" `
+                   -Name "AllowTelemetry" -ErrorAction SilentlyContinue).AllowTelemetry
+    $telemColor = if ($telem -eq 0) { "Green" } else { "Yellow" }
+    Write-Host "  Telemetry          : $(if ($telem -eq 0){'Disabled (level 0)'}else{"Level $telem"})" -ForegroundColor $telemColor
+
+    # Telemetry DiagTrack service
+    $diagSvc   = Get-Service -Name DiagTrack -ErrorAction SilentlyContinue
+    $diagColor = if ($diagSvc -and $diagSvc.StartType -eq 'Disabled') { "Green" } else { "Yellow" }
+    Write-Host "  DiagTrack Service  : $(if ($diagSvc -and $diagSvc.StartType -eq 'Disabled'){'Disabled'}else{'Running/Enabled'})" -ForegroundColor $diagColor
+
+    # Page file clear on shutdown
+    $pfClear      = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" `
+                     -Name "ClearPageFileAtShutdown" -ErrorAction SilentlyContinue).ClearPageFileAtShutdown
+    $pfClearColor = if ($pfClear -eq 1) { "Green" } else { "Yellow" }
+    Write-Host "  Clear Page File    : $(if ($pfClear -eq 1){'Enabled on shutdown'}else{'Disabled'})" -ForegroundColor $pfClearColor
+
+    # SEHOP
+    $sehop      = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\kernel" `
+                   -Name "DisableExceptionChainValidation" -ErrorAction SilentlyContinue).DisableExceptionChainValidation
+    $sehopColor = if ($sehop -eq 0) { "Green" } else { "Yellow" }
+    Write-Host "  SEHOP              : $(if ($sehop -eq 0){'Enabled (secure)'}else{'Disabled'})" -ForegroundColor $sehopColor
+
+    # IPv6
+    $ipv6Comp  = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" `
+                  -Name "DisabledComponents" -ErrorAction SilentlyContinue).DisabledComponents
+    $ipv6Color = if ($ipv6Comp -eq 0xFF) { "Green" } else { "Cyan" }
+    Write-Host "  IPv6               : $(if ($ipv6Comp -eq 0xFF){'Disabled'}else{'Enabled'})" -ForegroundColor $ipv6Color
+
+    # Cortana
+    $cortana      = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" `
+                     -Name "AllowCortana" -ErrorAction SilentlyContinue).AllowCortana
+    $cortanaColor = if ($cortana -eq 0) { "Green" } else { "Yellow" }
+    Write-Host "  Cortana            : $(if ($cortana -eq 0){'Disabled (policy)'}else{'Enabled'})" -ForegroundColor $cortanaColor
 
     Write-Host ""
 }
@@ -620,9 +1019,22 @@ function Invoke-AllHardening {
     Disable-WindowsScriptHost
     Disable-AnonymousAccess
     Enable-CredentialGuard
+    Disable-Telemetry
+    Disable-AdvertisingID
+    Disable-Cortana
+    Disable-PrintSpooler
+    Set-NTLMv2Only
+    Disable-PowerShellv2
+    Enable-ExploitProtection
+    Enable-ClearPageFileOnShutdown
+    Disable-RemoteAssistance
+    Set-SecureDNS
+    Disable-IPv6
+    Enable-AutomaticUpdates
+    Set-ScreenLockTimeout
     Write-Host ""
     Write-Host "  *** All hardening tasks complete. ***" -ForegroundColor Magenta
-    Write-Host "  *** A system restart is recommended. ***" -ForegroundColor Yellow
+    Write-Host "  *** A system restart is strongly recommended. ***" -ForegroundColor Yellow
     Write-Host ""
 }
 
@@ -635,7 +1047,7 @@ function Show-Banner {
     Write-Host ""
     Write-Host "  ╔════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
     Write-Host "  ║       W I N D O W S   S E C U R I T Y                 ║" -ForegroundColor Magenta
-    Write-Host "  ║              E N H A N C E R   v2.0                   ║" -ForegroundColor Magenta
+    Write-Host "  ║              E N H A N C E R   v3.0                   ║" -ForegroundColor Magenta
     Write-Host "  ╚════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
     Write-Host ""
 }
@@ -680,12 +1092,39 @@ function Show-Menu {
     Write-Host "   27.  Enable comprehensive security audit policy"
     Write-Host "   28.  Enable LSA / Credential Guard protection"
     Write-Host ""
-    Write-Host "  ── Utilities ─────────────────────────────────────────────" -ForegroundColor Yellow
-    Write-Host "   29.  Show security status report"
-    Write-Host "   30.  Apply ALL hardening settings  [recommended]"
-    Write-Host "   31.  Exit"
+    Write-Host "  ── Privacy & Telemetry ───────────────────────────────────" -ForegroundColor Yellow
+    Write-Host "   29.  Disable Windows Telemetry (DiagTrack + policy)"
+    Write-Host "   30.  Enable  Windows Telemetry (restore)"
+    Write-Host "   31.  Disable Advertising ID & content tracking"
+    Write-Host "   32.  Disable Cortana & web search"
     Write-Host ""
-    $choice = Read-Host "  Enter choice (1-31)"
+    Write-Host "  ── Advanced System Hardening ─────────────────────────────" -ForegroundColor Yellow
+    Write-Host "   33.  Disable Print Spooler  (PrintNightmare prevention)"
+    Write-Host "   34.  Enable  Print Spooler"
+    Write-Host "   35.  Force NTLMv2 only  (disable LM / NTLMv1)"
+    Write-Host "   36.  Disable PowerShell v2  (prevents logging bypass)"
+    Write-Host "   37.  Enable  Exploit Protection  (DEP, SEHOP, ASLR, heap guard)"
+    Write-Host "   38.  Enable  Clear Page File on Shutdown"
+    Write-Host "   39.  Disable Clear Page File on Shutdown"
+    Write-Host "   40.  Disable Remote Assistance"
+    Write-Host "   41.  Enable  Remote Assistance"
+    Write-Host ""
+    Write-Host "  ── Network & DNS Hardening ───────────────────────────────" -ForegroundColor Yellow
+    Write-Host "   42.  Set Secure DNS  (Cloudflare 1.1.1.1 + Google 8.8.8.8)"
+    Write-Host "   43.  Disable IPv6  (reduce network attack surface)"
+    Write-Host "   44.  Enable  IPv6"
+    Write-Host ""
+    Write-Host "  ── Additional Hardening ──────────────────────────────────" -ForegroundColor Yellow
+    Write-Host "   45.  Force Automatic Windows Updates"
+    Write-Host "   46.  Set screen auto-lock  (5-minute timeout)"
+    Write-Host "   47.  Rename built-in Administrator account"
+    Write-Host ""
+    Write-Host "  ── Utilities ─────────────────────────────────────────────" -ForegroundColor Yellow
+    Write-Host "   48.  Show security status report"
+    Write-Host "   49.  Apply ALL hardening settings  [recommended]"
+    Write-Host "   50.  Exit"
+    Write-Host ""
+    $choice = Read-Host "  Enter choice (1-50)"
     return $choice
 }
 
@@ -697,42 +1136,61 @@ do {
     $userChoice = Show-Menu
 
     switch ($userChoice) {
-         1  { Enforce-UACPasswordPrompt      }
-         2  { Set-UACAlwaysNotify            }
-         3  { Restore-UACToNormal            }
-         4  { Set-AccountLockoutPolicy       }
-         5  { Disable-AccountLockoutPolicy   }
-         6  { Set-StrongPasswordPolicy       }
-         7  { Enable-WindowsFirewall         }
-         8  { Disable-WindowsFirewall        }
-         9  { Disable-SMBv1                  }
-        10  { Enable-SMBv1                   }
-        11  { Disable-RemoteDesktop          }
-        12  { Enable-RemoteDesktop           }
-        13  { Disable-AnonymousAccess        }
-        14  { Disable-USBPorts               }
-        15  { Enable-USBPorts                }
-        16  { Disable-Cameras                }
-        17  { Enable-Cameras                 }
-        18  { Disable-AutoRun                }
-        19  { Enable-AutoRun                 }
-        20  { Enable-WindowsDefender         }
-        21  { Disable-GuestAccount           }
-        22  { Enable-GuestAccount            }
-        23  { Disable-WindowsScriptHost      }
-        24  { Enable-WindowsScriptHost       }
-        25  { Disable-UnnecessaryServices    }
-        26  { Enable-UnnecessaryServices     }
-        27  { Enable-AuditPolicy             }
-        28  { Enable-CredentialGuard         }
-        29  { Show-SecurityStatus            }
-        30  { Invoke-AllHardening            }
-        31  { Write-Host "  Exiting Windows Security Enhancer. Stay secure!" -ForegroundColor Magenta; break }
-        default { Write-Warn "Invalid choice. Please enter a number between 1 and 31." }
+         1  { Enforce-UACPasswordPrompt          }
+         2  { Set-UACAlwaysNotify                }
+         3  { Restore-UACToNormal                }
+         4  { Set-AccountLockoutPolicy           }
+         5  { Disable-AccountLockoutPolicy       }
+         6  { Set-StrongPasswordPolicy           }
+         7  { Enable-WindowsFirewall             }
+         8  { Disable-WindowsFirewall            }
+         9  { Disable-SMBv1                      }
+        10  { Enable-SMBv1                       }
+        11  { Disable-RemoteDesktop              }
+        12  { Enable-RemoteDesktop               }
+        13  { Disable-AnonymousAccess            }
+        14  { Disable-USBPorts                   }
+        15  { Enable-USBPorts                    }
+        16  { Disable-Cameras                    }
+        17  { Enable-Cameras                     }
+        18  { Disable-AutoRun                    }
+        19  { Enable-AutoRun                     }
+        20  { Enable-WindowsDefender             }
+        21  { Disable-GuestAccount               }
+        22  { Enable-GuestAccount                }
+        23  { Disable-WindowsScriptHost          }
+        24  { Enable-WindowsScriptHost           }
+        25  { Disable-UnnecessaryServices        }
+        26  { Enable-UnnecessaryServices         }
+        27  { Enable-AuditPolicy                 }
+        28  { Enable-CredentialGuard             }
+        29  { Disable-Telemetry                  }
+        30  { Enable-Telemetry                   }
+        31  { Disable-AdvertisingID              }
+        32  { Disable-Cortana                    }
+        33  { Disable-PrintSpooler               }
+        34  { Enable-PrintSpooler                }
+        35  { Set-NTLMv2Only                     }
+        36  { Disable-PowerShellv2               }
+        37  { Enable-ExploitProtection           }
+        38  { Enable-ClearPageFileOnShutdown     }
+        39  { Disable-ClearPageFileOnShutdown    }
+        40  { Disable-RemoteAssistance           }
+        41  { Enable-RemoteAssistance            }
+        42  { Set-SecureDNS                      }
+        43  { Disable-IPv6                       }
+        44  { Enable-IPv6                        }
+        45  { Enable-AutomaticUpdates            }
+        46  { Set-ScreenLockTimeout              }
+        47  { Rename-AdminAccount                }
+        48  { Show-SecurityStatus                }
+        49  { Invoke-AllHardening                }
+        50  { Write-Host "  Exiting Windows Security Enhancer. Stay secure!" -ForegroundColor Magenta; break }
+        default { Write-Warn "Invalid choice. Please enter a number from 1 to 50." }
     }
 
-    if ($userChoice -ne 31) {
+    if ($userChoice -ne 50) {
         Write-Host ""
         Read-Host "  Press ENTER to return to the menu"
     }
-} while ($userChoice -ne 31)
+} while ($userChoice -ne 50)

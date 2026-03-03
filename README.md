@@ -17,7 +17,7 @@ individual features à la carte.
 | 3 | Restore UAC to Windows default |
 | 4 | Set account lockout policy — 5 attempts, 30-minute lockout |
 | 5 | Restore account lockout policy to default (no lockout) |
-| 6 | Enforce strong password policy — 12-char minimum, complexity, 90-day expiry |
+| 6 | Enforce strong password policy — 12-char minimum, complexity, 90-day expiry via `secedit` |
 
 ### Firewall & Network
 | # | Action |
@@ -57,12 +57,47 @@ individual features à la carte.
 | 27 | Enable comprehensive **Security Audit Policy** — logs success+failure for logon, account management, object access, privilege use, policy changes + PowerShell Script Block & Module Logging + expands Security event log to 1 GB |
 | 28 | Enable **LSA / Credential Guard protection** — RunAsPPL, disable WDigest plain-text credential caching, disable Restricted Admin mode |
 
+### Privacy & Telemetry *(new in v3.0)*
+| # | Action |
+|---|--------|
+| 29 | **Disable Windows Telemetry** — stops DiagTrack & dmwappushservice, sets AllowTelemetry=0, disables CEIP, AIT, and Windows Error Reporting |
+| 30 | Enable Windows Telemetry (restore default) |
+| 31 | **Disable Advertising ID** — removes per-user and policy-level ad tracking; disables suggested content and silent app installs |
+| 32 | **Disable Cortana & web search** — blocks cloud search, location-based search, and web results in the Start menu |
+
+### Advanced System Hardening *(new in v3.0)*
+| # | Action |
+|---|--------|
+| 33 | **Disable Print Spooler** — mitigates PrintNightmare (CVE-2021-34527); stops and disables the Spooler service |
+| 34 | Enable Print Spooler |
+| 35 | **Force NTLMv2 only** — sets LmCompatibilityLevel=5, disables LM hash storage, enforces 128-bit NTLM session security |
+| 36 | **Disable PowerShell v2** — removes the legacy engine that bypasses Script Block Logging |
+| 37 | **Enable Exploit Protection** — DEP (AlwaysOn), SEHOP, Force ASLR, Heap Terminate on Corruption |
+| 38 | **Enable clear page file on shutdown** — zeros the page file at every shutdown to prevent offline data recovery |
+| 39 | Disable clear page file on shutdown (restore default) |
+| 40 | **Disable Remote Assistance** — closes RA firewall rules and sets fAllowToGetHelp=0 |
+| 41 | Enable Remote Assistance |
+
+### Network & DNS Hardening *(new in v3.0)*
+| # | Action |
+|---|--------|
+| 42 | **Set Secure DNS** — configures Cloudflare (1.1.1.1 / 1.0.0.1) and Google (8.8.8.8 / 8.8.4.4) on all active adapters |
+| 43 | **Disable IPv6** — disables IPv6 binding on all adapters + registry flag, reducing network attack surface |
+| 44 | Enable IPv6 |
+
+### Additional Hardening *(new in v3.0)*
+| # | Action |
+|---|--------|
+| 45 | **Force Automatic Windows Updates** — sets AUOptions=4 (auto download + install), daily at 03:00, ensures wuauserv is Automatic |
+| 46 | **Set screen auto-lock** — screensaver + Group Policy timeout of 5 minutes with password-on-resume; requires password on wake from sleep |
+| 47 | **Rename built-in Administrator account** — renames the RID-500 account to a custom name, making it harder for attackers to target |
+
 ### Utilities
 | # | Action |
 |---|--------|
-| 29 | **Security Status Report** — colour-coded dashboard of current UAC, Firewall, Defender, RDP, SMBv1, USB, Guest account, AutoRun, Script Host, LLMNR, and WDigest status |
-| 30 | **Apply ALL hardening settings** — runs every security function above in sequence |
-| 31 | Exit |
+| 48 | **Security Status Report** — colour-coded dashboard of 20 security controls: UAC, Firewall, Defender, RDP, Remote Assistance, SMBv1, Print Spooler, NTLM level, USB, Guest account, AutoRun, Script Host, LLMNR, WDigest, Telemetry, DiagTrack, Page File, SEHOP, IPv6, Cortana |
+| 49 | **Apply ALL hardening settings** — runs every security function in sequence (31 total) |
+| 50 | Exit |
 
 ---
 
@@ -72,7 +107,7 @@ individual features à la carte.
 
 ## How to Use
 1. Double-click **`runner.bat`** — it auto-elevates to Administrator.
-2. Use the on-screen menu to choose a feature, or select **30** to apply all
+2. Use the on-screen menu to choose a feature, or select **49** to apply all
    hardening settings at once.
 3. A **system restart** is recommended after running the full hardening suite.
 
@@ -85,7 +120,7 @@ individual features à la carte.
 ## Disclaimer
 - Use at your own risk.
 - Test in a controlled environment before deploying to production systems.
-- Some features (e.g. SMBv1 disable, USB disable) may affect legitimate workflows — review before applying.
+- Some features (e.g. SMBv1 disable, USB disable, IPv6 disable, Print Spooler disable) may affect legitimate workflows — review before applying.
 
 ---
 
