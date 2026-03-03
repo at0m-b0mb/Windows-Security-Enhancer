@@ -841,6 +841,308 @@ function Rename-AdminAccount {
 }
 
 # =============================================================================
+#  ATTACK SURFACE REDUCTION (ASR) RULES
+# =============================================================================
+
+function Enable-ASRRules {
+    Write-Info "Enabling Windows Defender Attack Surface Reduction (ASR) rules..."
+    $rules = @(
+        @{Id='BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550'; Name='Block executable content from email/webmail'},
+        @{Id='D4F940AB-401B-4EFC-AADC-AD5F3C50688A'; Name='Block Office apps from creating child processes'},
+        @{Id='3B576869-A4EC-4529-8536-B80A7769E899'; Name='Block Office from creating executable content'},
+        @{Id='75668C1F-73B5-4CF0-BB93-3ECF5CB7CC84'; Name='Block Office apps from injecting into other processes'},
+        @{Id='D3E037E1-3EB8-44C8-A917-57927947596D'; Name='Block JS/VBScript from launching downloaded executables'},
+        @{Id='5BEB7EFE-FD9A-4556-801D-275E5FFC04CC'; Name='Block execution of potentially obfuscated scripts'},
+        @{Id='92E97FA1-2EDF-4476-BDD6-9DD0B4DDDC7B'; Name='Block Win32 API calls from Office macros'},
+        @{Id='C1DB55AB-C21A-4637-BB3F-A12568109D35'; Name='Advanced ransomware protection'},
+        @{Id='9E6C4E1F-7D60-472F-BA1A-A39EF669E4B2'; Name='Block credential stealing from LSASS'},
+        @{Id='D1E49AAC-8F56-4280-B9BA-993A6D77406C'; Name='Block process creation from PSExec and WMI commands'},
+        @{Id='B2B3F03D-6A65-4F7B-A9C7-1C7EF74A9BA4'; Name='Block untrusted/unsigned processes from USB'},
+        @{Id='26190899-1602-49E8-8B27-EB1D0A1CE869'; Name='Block Office communication apps from creating child processes'},
+        @{Id='7674BA52-37EB-4A4F-A9A1-F0F9DE45BB2F'; Name='Block Adobe Reader from creating child processes'},
+        @{Id='E6DB77E5-3DF2-4CF1-B95A-636979351E5B'; Name='Block WMI event subscription persistence'}
+    )
+    $failed = 0
+    foreach ($rule in $rules) {
+        try {
+            Add-MpPreference -AttackSurfaceReductionRules_Ids $rule.Id `
+                             -AttackSurfaceReductionRules_Actions 1 -ErrorAction Stop
+            Write-Ok "Enabled: $($rule.Name)"
+        } catch {
+            Write-Warn "Could not enable: $($rule.Name)"
+            $failed++
+        }
+    }
+    if ($failed -gt 0) {
+        Write-Warn "Some rules failed. Ensure Defender real-time protection is active (option 20)."
+    } else {
+        Write-Ok "All $($rules.Count) ASR rules enabled in Block mode."
+    }
+}
+
+function Disable-ASRRules {
+    Write-Info "Disabling all Windows Defender Attack Surface Reduction (ASR) rules..."
+    try {
+        $current = @((Get-MpPreference -ErrorAction Stop).AttackSurfaceReductionRules_Ids)
+        if ($current.Count -gt 0) {
+            foreach ($id in $current) {
+                Add-MpPreference -AttackSurfaceReductionRules_Ids $id `
+                    -AttackSurfaceReductionRules_Actions 0 -ErrorAction SilentlyContinue
+            }
+            Write-Ok "All $($current.Count) ASR rules set to Disabled."
+        } else {
+            Write-Warn "No ASR rules are currently configured."
+        }
+    } catch {
+        Write-Fail "Could not read or modify ASR rules: $_"
+    }
+}
+
+# =============================================================================
+#  POWERSHELL HARDENING
+# =============================================================================
+
+function Set-PSExecutionRemoteSigned {
+    Write-Info "Setting PowerShell execution policy to RemoteSigned (LocalMachine scope)..."
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force
+    Write-Ok "Execution policy set to RemoteSigned — local scripts run; downloaded scripts must be signed."
+}
+
+function Set-PSExecutionAllSigned {
+    Write-Info "Setting PowerShell execution policy to AllSigned (LocalMachine scope)..."
+    Set-ExecutionPolicy -ExecutionPolicy AllSigned -Scope LocalMachine -Force
+    Write-Ok "Execution policy set to AllSigned — all scripts must carry a digital signature."
+}
+
+function Restore-PSExecutionDefault {
+    Write-Info "Restoring PowerShell execution policy to Undefined (inherits system default)..."
+    Set-ExecutionPolicy -ExecutionPolicy Undefined -Scope LocalMachine -Force
+    Write-Ok "Execution policy restored to Undefined."
+}
+
+# =============================================================================
+#  WIRELESS SECURITY
+# =============================================================================
+
+function Disable-Bluetooth {
+    Write-Info "Disabling Bluetooth service and devices..."
+    $btSvc = Get-Service -Name bthserv -ErrorAction SilentlyContinue
+    if ($btSvc) {
+        Stop-Service  -Name bthserv -Force          -ErrorAction SilentlyContinue
+        Set-Service   -Name bthserv -StartupType Disabled -ErrorAction SilentlyContinue
+        Write-Ok "Bluetooth Support Service stopped and disabled."
+    }
+
+    $btDevices = @(Get-PnpDevice -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Class -eq 'Bluetooth' -and $_.Status -eq 'OK' })
+    foreach ($dev in $btDevices) {
+        try {
+            Disable-PnpDevice -InstanceId $dev.InstanceId -Confirm:$false -ErrorAction Stop
+            Write-Ok "Disabled: $($dev.FriendlyName)"
+        } catch {
+            Write-Warn "Could not disable '$($dev.FriendlyName)': $_"
+        }
+    }
+
+    if (-not $btSvc -and $btDevices.Count -eq 0) {
+        Write-Warn "No Bluetooth service or devices found on this system."
+    }
+}
+
+function Enable-Bluetooth {
+    Write-Info "Enabling Bluetooth service and devices..."
+    $btSvc = Get-Service -Name bthserv -ErrorAction SilentlyContinue
+    if ($btSvc) {
+        Set-Service  -Name bthserv -StartupType Automatic -ErrorAction SilentlyContinue
+        Start-Service -Name bthserv -ErrorAction SilentlyContinue
+        Write-Ok "Bluetooth Support Service enabled."
+    }
+
+    $btDevices = @(Get-PnpDevice -ErrorAction SilentlyContinue | Where-Object { $_.Class -eq 'Bluetooth' })
+    foreach ($dev in $btDevices) {
+        try {
+            Enable-PnpDevice -InstanceId $dev.InstanceId -Confirm:$false -ErrorAction Stop
+            Write-Ok "Enabled: $($dev.FriendlyName)"
+        } catch {
+            Write-Warn "Could not enable '$($dev.FriendlyName)': $_"
+        }
+    }
+}
+
+# =============================================================================
+#  OFFICE & APPLICATION SECURITY
+# =============================================================================
+
+function Disable-OfficeMacros {
+    Write-Info "Disabling Microsoft Office macros for all installed Office versions..."
+    $versions = @('12.0', '14.0', '15.0', '16.0')
+    $apps     = @('Word', 'Excel', 'PowerPoint', 'Access', 'Outlook')
+    $count    = 0
+    foreach ($ver in $versions) {
+        foreach ($app in $apps) {
+            foreach ($hive in @('HKCU:', 'HKLM:')) {
+                $path = "${hive}\SOFTWARE\Policies\Microsoft\Office\$ver\$app\Security"
+                try {
+                    if (-not (Test-Path $path)) { New-Item -Path $path -Force | Out-Null }
+                    # VBAWarnings 4 = disable all macros without notification
+                    Set-ItemProperty -Path $path -Name "VBAWarnings" -Value 4 -Type DWord -Force -ErrorAction Stop
+                    $count++
+                } catch {}
+            }
+        }
+    }
+    Write-Ok "Office macro policy applied (VBAWarnings=4) — $count registry keys written."
+    Write-Ok "Covers Office 2007–2016/365 for Word, Excel, PowerPoint, Access, Outlook."
+}
+
+function Enable-OfficeMacros {
+    Write-Info "Removing Microsoft Office macro policy (restoring application defaults)..."
+    $versions = @('12.0', '14.0', '15.0', '16.0')
+    $apps     = @('Word', 'Excel', 'PowerPoint', 'Access', 'Outlook')
+    foreach ($ver in $versions) {
+        foreach ($app in $apps) {
+            foreach ($hive in @('HKCU:', 'HKLM:')) {
+                $path = "${hive}\SOFTWARE\Policies\Microsoft\Office\$ver\$app\Security"
+                Remove-ItemProperty -Path $path -Name "VBAWarnings" -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    Write-Ok "Office macro policy removed — applications will use their built-in defaults."
+}
+
+# =============================================================================
+#  FIREWALL ENHANCEMENTS
+# =============================================================================
+
+function Enable-FirewallLogging {
+    Write-Info "Enabling Windows Firewall logging on all profiles (allowed + blocked)..."
+    $logFile = "$env:SystemRoot\System32\LogFiles\Firewall\pfirewall.log"
+    foreach ($profile in @('Domain', 'Private', 'Public')) {
+        Set-NetFirewallProfile -Profile $profile `
+            -LogAllowed True `
+            -LogBlocked True `
+            -LogFileName $logFile `
+            -LogMaxSizeKilobytes 32767 `
+            -ErrorAction SilentlyContinue
+    }
+    Write-Ok "Firewall logging enabled (allowed + blocked) for Domain, Private, Public profiles."
+    Write-Ok "Log location: $logFile  (32767 KB max size per-profile setting; all profiles share the same file)."
+}
+
+function Set-FirewallBlockOutbound {
+    Write-Warn "WARNING: Blocking all outbound traffic will break most network applications."
+    Write-Warn "Only use this on air-gapped or highly controlled systems."
+    Write-Info "Setting default outbound action to Block on all firewall profiles..."
+    Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultOutboundAction Block
+    Write-Ok "Default outbound action set to Block."
+    Write-Warn "Add explicit outbound allow rules for required applications to restore connectivity."
+}
+
+function Restore-FirewallDefaultOutbound {
+    Write-Info "Restoring default outbound action to Allow on all firewall profiles..."
+    Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultOutboundAction Allow
+    Write-Ok "Default outbound action restored to Allow."
+}
+
+# =============================================================================
+#  DRIVE ENCRYPTION (BITLOCKER)
+# =============================================================================
+
+function Show-BitLockerStatus {
+    Write-Info "Checking BitLocker encryption status on all drives..."
+    try {
+        $volumes = Get-BitLockerVolume -ErrorAction Stop
+        Write-Host ""
+        foreach ($vol in $volumes) {
+            $color = if ($vol.ProtectionStatus -eq 'On') { "Green" } else { "Red" }
+            Write-Host ("  Drive {0,-4}: Protection={1,-3}  Encryption={2,3}%  Method={3}" -f `
+                $vol.MountPoint, $vol.ProtectionStatus, $vol.EncryptionPercentage, $vol.EncryptionMethod) `
+                -ForegroundColor $color
+        }
+        Write-Host ""
+    } catch {
+        Write-Fail "BitLocker cmdlets unavailable: $_"
+        Write-Warn "BitLocker requires Windows Pro/Enterprise/Education."
+    }
+}
+
+function Enable-BitLockerSystem {
+    Write-Info "Enabling BitLocker on system drive (C:) with XTS-AES 256 encryption..."
+    try {
+        $vol = Get-BitLockerVolume -MountPoint "C:" -ErrorAction Stop
+        if ($vol.ProtectionStatus -eq 'On') {
+            Write-Warn "BitLocker is already enabled on C:."
+            return
+        }
+
+        $tpm = Get-Tpm -ErrorAction SilentlyContinue
+        if ($tpm -and $tpm.TpmPresent -and $tpm.TpmReady) {
+            Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 `
+                -TpmProtector -ErrorAction Stop | Out-Null
+            Write-Ok "BitLocker enabled on C: using TPM protector (XTS-AES 256)."
+        } else {
+            Write-Warn "TPM not available or not ready — a startup PIN is required."
+            $pin = Read-Host "  Enter a 6+ digit startup PIN (blank to cancel)" -AsSecureString
+            $pinPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($pin))
+            if ([string]::IsNullOrEmpty($pinPlain)) {
+                Write-Warn "No PIN entered — operation cancelled."
+                return
+            }
+            Enable-BitLocker -MountPoint "C:" -EncryptionMethod XtsAes256 `
+                -TpmAndPinProtector -Pin $pin -ErrorAction Stop | Out-Null
+            Write-Ok "BitLocker enabled on C: using TPM+PIN protector (XTS-AES 256)."
+        }
+
+        # Save recovery key to Desktop
+        $rk = (Get-BitLockerVolume -MountPoint "C:").KeyProtector |
+              Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' } | Select-Object -First 1
+        if ($rk) {
+            $keyPath = "$env:USERPROFILE\Desktop\BitLocker_RecoveryKey_C.txt"
+            "BitLocker Recovery Key for C:  $($rk.RecoveryPassword)" | Set-Content -Path $keyPath
+            Write-Ok "Recovery key saved: $keyPath"
+            Write-Warn "Copy this key to a safe offline location, then delete it from the Desktop!"
+        }
+
+        Write-Ok "Encryption will proceed in the background — do not power off until complete."
+    } catch {
+        Write-Fail "Could not enable BitLocker: $_"
+        Write-Warn "BitLocker requires Windows Pro/Enterprise/Education and a compatible TPM or startup key."
+    }
+}
+
+# =============================================================================
+#  REMOTE ACCESS HARDENING
+# =============================================================================
+
+function Disable-WinRM {
+    Write-Info "Disabling PowerShell Remoting and WinRM service..."
+    # Disable PS Remoting
+    Disable-PSRemoting -Force -ErrorAction SilentlyContinue
+
+    # Remove all WinRM listeners
+    Remove-Item -Path WSMan:\Localhost\listener\* -Recurse -Force -ErrorAction SilentlyContinue
+
+    # Stop and disable WinRM service
+    Stop-Service -Name WinRM -Force          -ErrorAction SilentlyContinue
+    Set-Service  -Name WinRM -StartupType Disabled -ErrorAction SilentlyContinue
+
+    # Disable firewall rules for WinRM
+    Get-NetFirewallRule -DisplayGroup "Windows Remote Management" -ErrorAction SilentlyContinue |
+        Disable-NetFirewallRule -ErrorAction SilentlyContinue
+
+    Write-Ok "PowerShell Remoting disabled and WinRM service stopped."
+}
+
+function Enable-WinRM {
+    Write-Info "Enabling PowerShell Remoting and WinRM service..."
+    Set-Service -Name WinRM -StartupType Automatic -ErrorAction SilentlyContinue
+    Enable-PSRemoting -Force -SkipNetworkProfileCheck -ErrorAction SilentlyContinue
+    Write-Ok "PowerShell Remoting enabled."
+    Write-Warn "Ensure only trusted administrators have remote PowerShell access."
+}
+
+# =============================================================================
 #  SECURITY STATUS REPORT
 # =============================================================================
 
@@ -991,6 +1293,44 @@ function Show-SecurityStatus {
     $cortanaColor = if ($cortana -eq 0) { "Green" } else { "Yellow" }
     Write-Host "  Cortana            : $(if ($cortana -eq 0){'Disabled (policy)'}else{'Enabled'})" -ForegroundColor $cortanaColor
 
+    # ASR Rules
+    $asrIds   = @()
+    try { $asrIds = @((Get-MpPreference -ErrorAction Stop).AttackSurfaceReductionRules_Ids) } catch {}
+    $asrColor = if ($asrIds.Count -ge 10) { "Green" } elseif ($asrIds.Count -gt 0) { "Yellow" } else { "Red" }
+    Write-Host "  ASR Rules          : $($asrIds.Count) rule(s) configured$(if ($asrIds.Count -ge 10){' (hardened)'}elseif ($asrIds.Count -gt 0){' (partial)'}else{' — NONE configured!'})" -ForegroundColor $asrColor
+
+    # PowerShell Execution Policy
+    $psPolicy      = (Get-ExecutionPolicy -Scope LocalMachine)
+    $psPolicyColor = if ($psPolicy -in @('AllSigned','RemoteSigned','Restricted')) { "Green" } else { "Yellow" }
+    Write-Host "  PS Exec Policy     : $psPolicy$(if ($psPolicy -in @('AllSigned','RemoteSigned','Restricted')){' (secure)'}else{' — consider hardening'})" -ForegroundColor $psPolicyColor
+
+    # Bluetooth
+    $btSvc      = Get-Service -Name bthserv -ErrorAction SilentlyContinue
+    $btColor    = if ($btSvc -and $btSvc.StartType -eq 'Disabled') { "Green" } else { "Yellow" }
+    Write-Host "  Bluetooth          : $(if ($btSvc -and $btSvc.StartType -eq 'Disabled'){'Service Disabled'}elseif ($btSvc){'Service Enabled'}else{'Not present'})" -ForegroundColor $btColor
+
+    # Office Macros
+    $macroKey   = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Office\16.0\Word\Security" `
+                   -Name "VBAWarnings" -ErrorAction SilentlyContinue).VBAWarnings
+    $macroColor = if ($macroKey -eq 4) { "Green" } else { "Yellow" }
+    Write-Host "  Office Macros      : $(if ($macroKey -eq 4){'Disabled via policy'}else{'Not restricted by policy'})" -ForegroundColor $macroColor
+
+    # BitLocker (C:)
+    $bl = $null
+    try { $bl = Get-BitLockerVolume -MountPoint "C:" -ErrorAction Stop } catch {}
+    $blColor = if ($bl -and $bl.ProtectionStatus -eq 'On') { "Green" } else { "Red" }
+    Write-Host "  BitLocker (C:)     : $(if ($bl -and $bl.ProtectionStatus -eq 'On'){'ENABLED (encrypted)'}elseif ($bl){'DISABLED — drive unencrypted!'}else{'Status unavailable (requires Pro/Enterprise)'})" -ForegroundColor $blColor
+
+    # WinRM / PS Remoting
+    $winrm      = Get-Service -Name WinRM -ErrorAction SilentlyContinue
+    $winrmColor = if ($winrm -and $winrm.StartType -eq 'Disabled') { "Green" } else { "Yellow" }
+    Write-Host "  WinRM / PS Remote  : $(if ($winrm -and $winrm.StartType -eq 'Disabled'){'Disabled (secure)'}elseif ($winrm){'Enabled'}else{'Not present'})" -ForegroundColor $winrmColor
+
+    # Firewall Logging
+    $fwLog      = (Get-NetFirewallProfile -Name Domain -ErrorAction SilentlyContinue).LogBlocked
+    $fwLogColor = if ($fwLog -eq $true) { "Green" } else { "Yellow" }
+    Write-Host "  Firewall Logging   : $(if ($fwLog -eq $true){'Enabled'}else{'Disabled'})" -ForegroundColor $fwLogColor
+
     Write-Host ""
 }
 
@@ -1009,9 +1349,11 @@ function Invoke-AllHardening {
     Disable-Cameras
     Disable-USBPorts
     Enable-WindowsFirewall
+    Enable-FirewallLogging
     Disable-SMBv1
     Disable-RemoteDesktop
     Enable-WindowsDefender
+    Enable-ASRRules
     Disable-AutoRun
     Disable-GuestAccount
     Enable-AuditPolicy
@@ -1028,10 +1370,14 @@ function Invoke-AllHardening {
     Enable-ExploitProtection
     Enable-ClearPageFileOnShutdown
     Disable-RemoteAssistance
+    Disable-WinRM
     Set-SecureDNS
     Disable-IPv6
     Enable-AutomaticUpdates
     Set-ScreenLockTimeout
+    Disable-OfficeMacros
+    Disable-Bluetooth
+    Set-PSExecutionAllSigned
     Write-Host ""
     Write-Host "  *** All hardening tasks complete. ***" -ForegroundColor Magenta
     Write-Host "  *** A system restart is strongly recommended. ***" -ForegroundColor Yellow
@@ -1047,7 +1393,7 @@ function Show-Banner {
     Write-Host ""
     Write-Host "  ╔════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
     Write-Host "  ║       W I N D O W S   S E C U R I T Y                 ║" -ForegroundColor Magenta
-    Write-Host "  ║              E N H A N C E R   v3.0                   ║" -ForegroundColor Magenta
+    Write-Host "  ║              E N H A N C E R   v4.0                   ║" -ForegroundColor Magenta
     Write-Host "  ╚════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
     Write-Host ""
 }
@@ -1119,12 +1465,42 @@ function Show-Menu {
     Write-Host "   46.  Set screen auto-lock  (5-minute timeout)"
     Write-Host "   47.  Rename built-in Administrator account"
     Write-Host ""
-    Write-Host "  ── Utilities ─────────────────────────────────────────────" -ForegroundColor Yellow
-    Write-Host "   48.  Show security status report"
-    Write-Host "   49.  Apply ALL hardening settings  [recommended]"
-    Write-Host "   50.  Exit"
+    Write-Host "  ── Attack Surface Reduction (ASR) ────────────────────────" -ForegroundColor Yellow
+    Write-Host "   51.  Enable Windows Defender ASR rules  (14 rules / Block mode)"
+    Write-Host "   52.  Disable Windows Defender ASR rules"
     Write-Host ""
-    $choice = Read-Host "  Enter choice (1-50)"
+    Write-Host "  ── PowerShell Hardening ──────────────────────────────────" -ForegroundColor Yellow
+    Write-Host "   53.  Set execution policy to RemoteSigned"
+    Write-Host "   54.  Set execution policy to AllSigned  (strictest)"
+    Write-Host "   55.  Restore execution policy to default"
+    Write-Host ""
+    Write-Host "  ── Wireless Security ─────────────────────────────────────" -ForegroundColor Yellow
+    Write-Host "   56.  Disable Bluetooth"
+    Write-Host "   57.  Enable  Bluetooth"
+    Write-Host ""
+    Write-Host "  ── Office & Application Security ─────────────────────────" -ForegroundColor Yellow
+    Write-Host "   58.  Disable Microsoft Office macros  (all versions)"
+    Write-Host "   59.  Enable  Microsoft Office macros  (restore)"
+    Write-Host ""
+    Write-Host "  ── Firewall Enhancements ─────────────────────────────────" -ForegroundColor Yellow
+    Write-Host "   60.  Enable Firewall logging  (allowed + blocked, 32 MB)"
+    Write-Host "   61.  Block all outbound traffic by default  [advanced]"
+    Write-Host "   62.  Restore default outbound action  (Allow)"
+    Write-Host ""
+    Write-Host "  ── Drive Encryption (BitLocker) ──────────────────────────" -ForegroundColor Yellow
+    Write-Host "   63.  Show BitLocker status on all drives"
+    Write-Host "   64.  Enable BitLocker on system drive (C:)"
+    Write-Host ""
+    Write-Host "  ── Remote Access Hardening ───────────────────────────────" -ForegroundColor Yellow
+    Write-Host "   65.  Disable PowerShell Remoting / WinRM"
+    Write-Host "   66.  Enable  PowerShell Remoting / WinRM"
+    Write-Host ""
+    Write-Host "  ── Utilities ─────────────────────────────────────────────" -ForegroundColor Yellow
+    Write-Host "   67.  Show security status report"
+    Write-Host "   68.  Apply ALL hardening settings  [recommended]"
+    Write-Host "   69.  Exit"
+    Write-Host ""
+    $choice = Read-Host "  Enter choice (1-47, 51-69)"
     return $choice
 }
 
@@ -1183,14 +1559,30 @@ do {
         45  { Enable-AutomaticUpdates            }
         46  { Set-ScreenLockTimeout              }
         47  { Rename-AdminAccount                }
-        48  { Show-SecurityStatus                }
-        49  { Invoke-AllHardening                }
-        50  { Write-Host "  Exiting Windows Security Enhancer. Stay secure!" -ForegroundColor Magenta; break }
-        default { Write-Warn "Invalid choice. Please enter a number from 1 to 50." }
+        51  { Enable-ASRRules                    }
+        52  { Disable-ASRRules                   }
+        53  { Set-PSExecutionRemoteSigned        }
+        54  { Set-PSExecutionAllSigned           }
+        55  { Restore-PSExecutionDefault         }
+        56  { Disable-Bluetooth                  }
+        57  { Enable-Bluetooth                   }
+        58  { Disable-OfficeMacros               }
+        59  { Enable-OfficeMacros                }
+        60  { Enable-FirewallLogging             }
+        61  { Set-FirewallBlockOutbound          }
+        62  { Restore-FirewallDefaultOutbound    }
+        63  { Show-BitLockerStatus               }
+        64  { Enable-BitLockerSystem             }
+        65  { Disable-WinRM                      }
+        66  { Enable-WinRM                       }
+        67  { Show-SecurityStatus                }
+        68  { Invoke-AllHardening                }
+        69  { Write-Host "  Exiting Windows Security Enhancer. Stay secure!" -ForegroundColor Magenta; break }
+        default { Write-Warn "Invalid choice. Please enter a valid option number." }
     }
 
-    if ($userChoice -ne 50) {
+    if ($userChoice -ne 69) {
         Write-Host ""
         Read-Host "  Press ENTER to return to the menu"
     }
-} while ($userChoice -ne 50)
+} while ($userChoice -ne 69)

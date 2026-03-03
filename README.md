@@ -92,12 +92,56 @@ individual features à la carte.
 | 46 | **Set screen auto-lock** — screensaver + Group Policy timeout of 5 minutes with password-on-resume; requires password on wake from sleep |
 | 47 | **Rename built-in Administrator account** — renames the RID-500 account to a custom name, making it harder for attackers to target |
 
+### Attack Surface Reduction (ASR) *(new in v4.0)*
+| # | Action |
+|---|--------|
+| 51 | **Enable Windows Defender ASR rules** — enables 14 attack surface reduction rules in Block mode: email executable content, Office child processes, Office executable content, Office process injection, JS/VBScript launching downloads, obfuscated scripts, Office Win32 API calls, advanced ransomware protection, LSASS credential stealing, PSExec/WMI process creation, USB unsigned processes, Office comms child processes, Adobe Reader child processes, WMI persistence |
+| 52 | Disable all ASR rules (restore) |
+
+### PowerShell Hardening *(new in v4.0)*
+| # | Action |
+|---|--------|
+| 53 | **Set execution policy to RemoteSigned** — local scripts run freely; downloaded scripts must be signed |
+| 54 | **Set execution policy to AllSigned** — all scripts (local and remote) must carry a valid digital signature |
+| 55 | Restore execution policy to Undefined (system default) |
+
+### Wireless Security *(new in v4.0)*
+| # | Action |
+|---|--------|
+| 56 | **Disable Bluetooth** — stops and disables the Bluetooth Support Service and all Bluetooth PnP devices |
+| 57 | Enable Bluetooth |
+
+### Office & Application Security *(new in v4.0)*
+| # | Action |
+|---|--------|
+| 58 | **Disable Microsoft Office macros** — sets VBAWarnings=4 (disable all macros without notification) via Group Policy registry for Office 2007–2016/365 across Word, Excel, PowerPoint, Access, Outlook |
+| 59 | Enable Office macros (removes policy, restores application defaults) |
+
+### Firewall Enhancements *(new in v4.0)*
+| # | Action |
+|---|--------|
+| 60 | **Enable Firewall logging** — enables logging of allowed and blocked connections on all profiles (Domain, Private, Public) with a 32 MB log file |
+| 61 | **Block all outbound traffic by default** — sets DefaultOutboundAction=Block on all profiles *(advanced — breaks most apps without explicit allow rules)* |
+| 62 | Restore default outbound action (Allow) |
+
+### Drive Encryption (BitLocker) *(new in v4.0)*
+| # | Action |
+|---|--------|
+| 63 | **Show BitLocker status** — displays protection status, encryption percentage, and encryption method for every drive |
+| 64 | **Enable BitLocker on system drive (C:)** — uses TPM protector (if available) or TPM+PIN; XTS-AES 256 encryption; saves recovery key to Desktop |
+
+### Remote Access Hardening *(new in v4.0)*
+| # | Action |
+|---|--------|
+| 65 | **Disable PowerShell Remoting / WinRM** — runs Disable-PSRemoting, removes all WinRM listeners, stops and disables the WinRM service, disables WinRM firewall rules |
+| 66 | Enable PowerShell Remoting / WinRM |
+
 ### Utilities
 | # | Action |
 |---|--------|
-| 48 | **Security Status Report** — colour-coded dashboard of 20 security controls: UAC, Firewall, Defender, RDP, Remote Assistance, SMBv1, Print Spooler, NTLM level, USB, Guest account, AutoRun, Script Host, LLMNR, WDigest, Telemetry, DiagTrack, Page File, SEHOP, IPv6, Cortana |
-| 49 | **Apply ALL hardening settings** — runs every security function in sequence (31 total) |
-| 50 | Exit |
+| 67 | **Security Status Report** — colour-coded dashboard of 27 security controls: UAC, Firewall, Defender, RDP, Remote Assistance, SMBv1, Print Spooler, NTLM level, USB, Guest account, AutoRun, Script Host, LLMNR, WDigest, Telemetry, DiagTrack, Page File, SEHOP, IPv6, Cortana, ASR rules, PS execution policy, Bluetooth, Office macros, BitLocker (C:), WinRM, Firewall logging |
+| 68 | **Apply ALL hardening settings** — runs every security hardening function in sequence (37 total) |
+| 69 | Exit |
 
 ---
 
@@ -107,7 +151,7 @@ individual features à la carte.
 
 ## How to Use
 1. Double-click **`runner.bat`** — it auto-elevates to Administrator.
-2. Use the on-screen menu to choose a feature, or select **49** to apply all
+2. Use the on-screen menu to choose a feature, or select **68** to apply all
    hardening settings at once.
 3. A **system restart** is recommended after running the full hardening suite.
 
@@ -120,7 +164,8 @@ individual features à la carte.
 ## Disclaimer
 - Use at your own risk.
 - Test in a controlled environment before deploying to production systems.
-- Some features (e.g. SMBv1 disable, USB disable, IPv6 disable, Print Spooler disable) may affect legitimate workflows — review before applying.
+- Some features (e.g. SMBv1 disable, USB disable, IPv6 disable, Print Spooler disable, Bluetooth disable, outbound block, AllSigned policy) may affect legitimate workflows — review before applying.
+- BitLocker: always store your recovery key securely before encrypting any drive.
 
 ---
 
