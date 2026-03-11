@@ -4,12 +4,21 @@
 #  Run via runner.bat (requires Administrator privileges).
 # =============================================================================
 
-# ─── Privilege Check ─────────────────────────────────────────────────────────
+# ─── Privilege Check / Self-Elevation ────────────────────────────────────────
 if (-not ([Security.Principal.WindowsPrincipal]
          [Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
-    Write-Host "ERROR: This script must be run as Administrator." -ForegroundColor Red
-    exit 1
+    Write-Host "  [!] Administrator privileges required. Re-launching as Administrator..." -ForegroundColor Yellow
+    $script = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
+    try {
+        Start-Process powershell -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$script`"" -Verb RunAs -ErrorAction Stop
+    } catch {
+        Write-Host "  [-] Could not elevate privileges: $_" -ForegroundColor Red
+        Write-Host "  [!] Please right-click runner.bat and select 'Run as administrator'." -ForegroundColor Yellow
+        Read-Host "  Press ENTER to exit"
+        exit 1
+    }
+    exit
 }
 
 # ─── Colored Output Helpers ──────────────────────────────────────────────────
