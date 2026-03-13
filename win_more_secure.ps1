@@ -1,13 +1,12 @@
-# =============================================================================
+﻿# =============================================================================
 #  Windows Security Enhancer
 #  Hardens Windows systems against common attack vectors.
 #  Run via runner.bat (requires Administrator privileges).
 # =============================================================================
 
 # ─── Privilege Check / Self-Elevation ────────────────────────────────────────
-if (-not ([Security.Principal.WindowsPrincipal]
-         [Security.Principal.WindowsIdentity]::GetCurrent()
-    ).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")) {
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Host "  [!] Administrator privileges required. Re-launching as Administrator..." -ForegroundColor Yellow
     $script = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
     try {
