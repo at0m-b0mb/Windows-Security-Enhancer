@@ -87,8 +87,8 @@ Double-click **`runner.bat`** — it automatically requests Administrator privil
 
 ```
   ╔════════════════════════════════════════════════════════╗
-  ║       W I N D O W S   S E C U R I T Y                 ║
-  ║              E N H A N C E R   v4.0                   ║
+  ║       W I N D O W S   S E C U R I T Y                  ║
+  ║              E N H A N C E R   v4.0                    ║
   ╚════════════════════════════════════════════════════════╝
 
   ── UAC & Authentication ─────────────────────────────────
