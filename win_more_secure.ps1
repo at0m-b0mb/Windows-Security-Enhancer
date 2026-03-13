@@ -315,6 +315,7 @@ function Enable-WindowsDefender {
 function Disable-AutoRun {
     Write-Info "Disabling AutoRun and AutoPlay (prevents removable-media attacks)..."
     $explorerPol = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    if (-not (Test-Path $explorerPol)) { New-Item -Path $explorerPol -Force | Out-Null }
     Set-ItemProperty -Path $explorerPol -Name "NoDriveTypeAutoRun" -Value 0xFF -Type DWord -Force
     Set-ItemProperty -Path $explorerPol -Name "NoDriveAutoRun"     -Value 67108863 -Type DWord -Force
 
@@ -332,6 +333,7 @@ function Disable-AutoRun {
 function Enable-AutoRun {
     Write-Info "Restoring AutoRun / AutoPlay to Windows defaults..."
     $explorerPol = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer"
+    if (-not (Test-Path $explorerPol)) { New-Item -Path $explorerPol -Force | Out-Null }
     Set-ItemProperty -Path $explorerPol -Name "NoDriveTypeAutoRun" -Value 0x91 -Type DWord -Force
 
     $apHandlers = "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers"
@@ -912,19 +914,19 @@ function Disable-ASRRules {
 
 function Set-PSExecutionRemoteSigned {
     Write-Info "Setting PowerShell execution policy to RemoteSigned (LocalMachine scope)..."
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope LocalMachine -Force -ErrorAction SilentlyContinue
     Write-Ok "Execution policy set to RemoteSigned — local scripts run; downloaded scripts must be signed."
 }
 
 function Set-PSExecutionAllSigned {
     Write-Info "Setting PowerShell execution policy to AllSigned (LocalMachine scope)..."
-    Set-ExecutionPolicy -ExecutionPolicy AllSigned -Scope LocalMachine -Force
+    Set-ExecutionPolicy -ExecutionPolicy AllSigned -Scope LocalMachine -Force -ErrorAction SilentlyContinue
     Write-Ok "Execution policy set to AllSigned — all scripts must carry a digital signature."
 }
 
 function Restore-PSExecutionDefault {
     Write-Info "Restoring PowerShell execution policy to Undefined (inherits system default)..."
-    Set-ExecutionPolicy -ExecutionPolicy Undefined -Scope LocalMachine -Force
+    Set-ExecutionPolicy -ExecutionPolicy Undefined -Scope LocalMachine -Force -ErrorAction SilentlyContinue
     Write-Ok "Execution policy restored to Undefined."
 }
 
