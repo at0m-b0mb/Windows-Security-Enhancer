@@ -1157,7 +1157,7 @@ function Enable-WinRM {
 function Show-SecurityStatus {
     Write-Host ""
     Write-Host "  ╔══════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "  ║           WINDOWS SECURITY STATUS REPORT                ║" -ForegroundColor Cyan
+    Write-Host "  ║           WINDOWS SECURITY STATUS REPORT                 ║" -ForegroundColor Cyan
     Write-Host "  ╚══════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
     Write-Host ""
 
@@ -1400,8 +1400,8 @@ function Show-Banner {
     Clear-Host
     Write-Host ""
     Write-Host "  ╔════════════════════════════════════════════════════════╗" -ForegroundColor Magenta
-    Write-Host "  ║       W I N D O W S   S E C U R I T Y                 ║" -ForegroundColor Magenta
-    Write-Host "  ║              E N H A N C E R   v4.0                   ║" -ForegroundColor Magenta
+    Write-Host "  ║       W I N D O W S   S E C U R I T Y                  ║" -ForegroundColor Magenta
+    Write-Host "  ║              E N H A N C E R   v4.0                    ║" -ForegroundColor Magenta
     Write-Host "  ╚════════════════════════════════════════════════════════╝" -ForegroundColor Magenta
     Write-Host ""
 }
@@ -1594,3 +1594,4 @@ do {
         Read-Host "  Press ENTER to return to the menu"
     }
 } while ($userChoice -ne 69)
+
